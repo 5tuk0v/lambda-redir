@@ -34,7 +34,7 @@ TIMEOUT_SECONDS = 30
 # Stdlib-only proxy that enforces the guardrail header.
 
 # Fail early if LINKED_ASSET_URL not replaced or guardrail missing.
-if not LINKED_ASSET_URL or LINKED_ASSET_URL.startswith('{{'):
+if not LINKED_ASSET_URL:
     print('ERROR: LINKED_ASSET_URL placeholder was not replaced. Embed your Terraform variable into this file before deploying.')
     sys.exit(2)
 
@@ -48,7 +48,7 @@ if not LINKED_ASSET_URL.startswith('http://') and not LINKED_ASSET_URL.startswit
 
 # Guardrail header name comes from Terraform, with the current default as a fallback.
 GUARDRAIL_HEADER = '{{ guardrail_header }}'.strip()
-if not GUARDRAIL_HEADER or GUARDRAIL_HEADER.startswith('{{'):
+if not GUARDRAIL_HEADER:
     GUARDRAIL_HEADER = 'x-amz-security-token'
 
 
