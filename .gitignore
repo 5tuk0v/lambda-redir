@@ -1,0 +1,50 @@
+# Generated Lambda functions (but keep the generator and hand-written examples)
+#*_lambda.py
+#*_generated.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.Python
+env/
+venv/
+
+# IDE - VSCode (track shared settings, ignore personal/local)
+.vscode/settings.json
+.vscode/launch.json
+.vscode/extensions.json
+!.vscode/
+
+# IDE - JetBrains
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AWS
+*.zip
+lambda.zip
+pkg/
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Deployment artifacts
+*.pyc
+
