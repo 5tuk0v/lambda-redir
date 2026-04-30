@@ -12,6 +12,7 @@ Runtime:
 - Malleable profile must set the configured guardrail header to the same value as `GUARDRAIL_VALUE` on the Lambda.
 - `DEBUG` is read inside the handler, so toggling the Lambda env var takes effect on the next invocation that lands on a fresh execution environment.
 - Proxy preserves method, query, headers, and body.
+- Avoid fixing the `Host` header to a different address than the public endpoint being contacted; a mismatched `Host` can be rejected before the request ever reaches API Gateway or Lambda.
 
 That's it.
 
