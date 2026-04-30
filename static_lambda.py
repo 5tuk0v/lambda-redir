@@ -27,7 +27,6 @@ LINKED_ASSET_URL = "{{ linked_asset_a_record }}"
 
 # Runtime-only secret guardrail: set this as an environment variable on the Lambda.
 GUARDRAIL_VALUE = os.environ.get('GUARDRAIL_VALUE', '').strip()
-DEBUG = bool(os.environ.get('DEBUG'))
 
 # Request timeout (seconds)
 TIMEOUT_SECONDS = 30
@@ -93,6 +92,8 @@ def build_proxy_url(base: str, path: str, raw_query: str) -> str:
 def lambda_handler(event: typing.Dict, context: typing.Any) -> typing.Dict:
     """API Gateway -> Lambda handler (supports v2 payload format and legacy v1 fields)."""
     try:
+        debug_enabled = bool(os.environ.get('DEBUG'))
+
         # HTTP method
         method = (event.get('requestContext', {}) .get('http', {}) .get('method')
                   or event.get('httpMethod') or 'GET')
@@ -107,7 +108,7 @@ def lambda_handler(event: typing.Dict, context: typing.Any) -> typing.Dict:
         headers = normalize_headers(event.get('headers') or {})
 
         logger.info(f"Received request: {method} {path}?{raw_query}")
-        if DEBUG:
+        if debug_enabled:
             # Debug prints (guardrail hidden)
             safe_headers = {k: v for k, v in (event.get('headers') or {}).items() if k.lower() != GUARDRAIL_HEADER}
             print('--- DEBUG REQUEST ---')
@@ -181,7 +182,7 @@ def lambda_handler(event: typing.Dict, context: typing.Any) -> typing.Dict:
         # Decide whether to base64-encode response body
         try:
             text = resp_body.decode('utf-8')
-            if DEBUG:
+            if debug_enabled:
                 print('--- DEBUG RESPONSE ---')
                 print('Status:', status)
                 print('Response headers:', resp_headers)
@@ -195,7 +196,7 @@ def lambda_handler(event: typing.Dict, context: typing.Any) -> typing.Dict:
             }
         except Exception:
             b64 = base64.b64encode(resp_body).decode('ascii')
-            if DEBUG:
+            if debug_enabled:
                 print('--- DEBUG RESPONSE ---')
                 print('Status:', status)
                 print('Response headers:', resp_headers)
