@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
-"""Static Lambda proxy (guardrail-first).
+"""Static Lambda proxy (guardrail-first) with verbose DEBUG logging.
 
 Deployment:
 - `LINKED_ASSET_URL` is a build-time placeholder; replace in your pipeline.
 - `GUARDRAIL_VALUE` is a runtime env var (required).
+- `GUARDRAIL_HEADER` (Terraform placeholder) defines the header name; defaults to 'x-amz-security-token'.
 
 Behavior:
-- Validate `x-amz-security-token` against `GUARDRAIL_VALUE`.
-- Return 403 on failure; otherwise proxy to {LINKED_ASSET_URL}/v2/<path>.
+- Validate the guardrail header against `GUARDRAIL_VALUE`; return 403 if missing/invalid.
+- Filter AWS infrastructure headers (X-Amzn-Trace-Id, X-Forwarded-*, X-Amz-Apigw-Id) from forwarding.
+- Proxy authenticated requests to {LINKED_ASSET_URL}/v2/<path> with the request body.
+- Handle both plain-text and base64-encoded request/response bodies.
+- Support multiValueHeaders, queryStringParameters, and pathParameters.
+
+Debug Mode (DEBUG=1):
+- Log full incoming request (headers redacted, body decoded/shown).
+- Log full outgoing response (status, headers, body length).
+- Guardail header is NEVER logged—it is redacted from all debug output.
 """
 import os
 import sys
@@ -43,7 +52,7 @@ if not GUARDRAIL_VALUE:
     sys.exit(2)
 
 # Ensure LINKED_ASSET_URL has a scheme
-if not LINKED_ASSET_URL.startswith('http://') and not LINKED_ASSET_URL.startswith('https://'):
+if not (LINKED_ASSET_URL.startswith('http://') or LINKED_ASSET_URL.startswith('https://')):
     LINKED_ASSET_URL = 'https://' + LINKED_ASSET_URL
 
 # Guardrail header name comes from Terraform, with the current default as a fallback.
@@ -51,23 +60,31 @@ GUARDRAIL_HEADER = '{{ guardrail_header }}'.strip()
 if not GUARDRAIL_HEADER:
     GUARDRAIL_HEADER = 'x-amz-security-token'
 
+# Headers to strip from forwarding and to redact from DEBUG dumps.
+# We include the guardrail header so it is not forwarded or logged.
+INFRA_HEADERS = {
+    'x-amzn-trace-id',
+    'x-forwarded-for',
+    'x-forwarded-proto',
+    'x-forwarded-port',
+    'x-amz-apigw-id',
+}
+INFRA_HEADERS.add(GUARDRAIL_HEADER.lower())
 
-def normalize_headers(headers: typing.Optional[typing.Dict[str, str]]) -> typing.Dict[str, str]:
-    if not headers:
-        return {}
-    return {k.lower(): v for k, v in headers.items()}
+
+def _error_response(status_code: int, message: str) -> typing.Dict:
+    """Build a JSON error response."""
+    return {
+        'statusCode': status_code,
+        'headers': {'Content-Type': 'application/json'},
+        'body': json.dumps({'message': message}),
+        'isBase64Encoded': False
+    }
 
 
 def filter_headers_for_forwarding(headers: typing.Dict[str, str]) -> typing.Dict[str, str]:
-    aws_headers = {
-        'x-amzn-trace-id',
-        'x-forwarded-for',
-        'x-forwarded-proto',
-        'x-forwarded-port',
-        'x-amz-apigw-id',
-    }
-    # Strip common AWS infra headers; keep profile headers (Host, guardrail, etc.).
-    return {k: v for k, v in headers.items() if k.lower() not in aws_headers}
+    # Strip common AWS infra headers (and guardrail); keep profile headers.
+    return {k: v for k, v in headers.items() if k.lower() not in INFRA_HEADERS}
 
 
 def build_proxy_url(base: str, path: str, raw_query: str) -> str:
@@ -86,7 +103,6 @@ def build_proxy_url(base: str, path: str, raw_query: str) -> str:
     if raw_query:
         url = url + '?' + raw_query
     return url
-# Outbound requests use urllib.request.urlopen.
 
 
 def lambda_handler(event: typing.Dict, context: typing.Any) -> typing.Dict:
@@ -105,59 +121,87 @@ def lambda_handler(event: typing.Dict, context: typing.Any) -> typing.Dict:
             qdict = event.get('queryStringParameters') or {}
             raw_query = urllib.parse.urlencode(qdict) if qdict else ''
 
-        headers = normalize_headers(event.get('headers') or {})
-
         logger.info(f"Received request: {method} {path}?{raw_query}")
+        
+        # Check guardrail header (case-insensitive)
+        headers_raw = event.get('headers') or {}
+        guardrail_value = next(
+            (v for k, v in headers_raw.items() if k.lower() == GUARDRAIL_HEADER),
+            None
+        )
+        
         if debug_enabled:
-            # Debug prints (guardrail hidden)
-            safe_headers = {k: v for k, v in (event.get('headers') or {}).items() if k.lower() != GUARDRAIL_HEADER}
+            # Verbose debug dump — redact infra headers (including guardrail)
+            # Note: INFRA_HEADERS keys are already lowercased
+            headers_safe = {k: v for k, v in headers_raw.items() if k.lower() not in INFRA_HEADERS}
+
+            mv_raw = event.get('multiValueHeaders') or {}
+            mv_safe = {k: v for k, v in mv_raw.items() if k.lower() not in INFRA_HEADERS}
+
+            qparams = event.get('queryStringParameters')
+            pparams = event.get('pathParameters')
+
+            req_body = event.get('body')
+            is_b64 = bool(event.get('isBase64Encoded'))
+            req_body_display = None
+            if req_body is None or req_body == '':
+                req_body_display = None
+            else:
+                if is_b64:
+                    try:
+                        decoded = base64.b64decode(req_body)
+                        try:
+                            req_body_display = decoded.decode('utf-8')
+                        except Exception:
+                            # Binary content — show base64 and decoded length
+                            req_body_display = {
+                                'base64': req_body,
+                                'decoded_bytes_len': len(decoded)
+                            }
+                    except Exception:
+                        req_body_display = {'base64_invalid': True, 'raw': req_body}
+                else:
+                    req_body_display = req_body if isinstance(req_body, str) else str(req_body)
+
             print('--- DEBUG REQUEST ---')
             print('Method:', method)
             print('Path:', path)
             print('Raw query:', raw_query)
-            print('Headers (safe):', safe_headers)
-            body_preview = event.get('body')
-            if body_preview:
-                try:
-                    size = len(body_preview)
-                except Exception:
-                    size = 'unknown'
-            else:
-                size = 0
-            print('Body length (chars or bytes):', size)
-            print('isBase64Encoded:', bool(event.get('isBase64Encoded')))
+            print('Headers (redacted):', headers_safe)
+            if mv_safe:
+                print('MultiValueHeaders (redacted):', mv_safe)
+            if qparams is not None:
+                print('QueryStringParameters:', qparams)
+            if pparams is not None:
+                print('PathParameters:', pparams)
+            print('Body:', req_body_display)
+            print('isBase64Encoded:', is_b64)
             print('---')
 
         # Enforce guardrail
-        if headers.get(GUARDRAIL_HEADER) != GUARDRAIL_VALUE:
+        if guardrail_value != GUARDRAIL_VALUE:
             logger.warning('Guardrail check failed for request: %s %s', method, path)
-            # Return a legitimate-looking 403 JSON response
-            return {
-                'statusCode': 403,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'message': 'Forbidden'}),
-                'isBase64Encoded': False
-            }
+            return _error_response(403, 'Forbidden')
 
         # Build proxy URL
         proxy_url = build_proxy_url(LINKED_ASSET_URL, path, raw_query)
 
         # Prepare request body
-        body = event.get('body')
+        req_body = event.get('body')
         is_base64 = bool(event.get('isBase64Encoded'))
-        if is_base64 and body:
+        if is_base64 and req_body:
             try:
-                data = base64.b64decode(body)
+                data = base64.b64decode(req_body)
             except Exception:
                 logger.exception('Failed to decode base64 body')
                 data = b''
-        elif body:
-            data = body.encode('utf-8') if isinstance(body, str) else body
+        elif req_body:
+            data = req_body.encode('utf-8') if isinstance(req_body, str) else req_body
         else:
             data = None
 
         # Filter infra headers
-        forward_headers = filter_headers_for_forwarding(event.get('headers') or {})
+        forward_headers = filter_headers_for_forwarding(headers_raw)
 
         # Create request using urllib and forward to upstream
         req = urllib.request.Request(proxy_url, data=data, headers=forward_headers, method=method)
@@ -168,56 +212,38 @@ def lambda_handler(event: typing.Dict, context: typing.Any) -> typing.Dict:
             resp = e
         except urllib.error.URLError:
             logger.exception('Upstream network error')
-            return {
-                'statusCode': 502,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'message': 'Bad Gateway'}),
-                'isBase64Encoded': False,
-            }
+            return _error_response(502, 'Bad Gateway')
 
         resp_body = resp.read()
         resp_headers = dict(resp.headers) if hasattr(resp, 'headers') else {}
         status = getattr(resp, 'status', getattr(resp, 'code', 502))
 
         # Decide whether to base64-encode response body
+        is_base64_response = False
         try:
-            text = resp_body.decode('utf-8')
-            if debug_enabled:
-                print('--- DEBUG RESPONSE ---')
-                print('Status:', status)
-                print('Response headers:', resp_headers)
-                print('Body length (bytes):', len(resp_body))
-                print('---')
-            return {
-                'statusCode': status,
-                'headers': resp_headers,
-                'body': text,
-                'isBase64Encoded': False
-            }
+            body = resp_body.decode('utf-8')
         except Exception:
-            b64 = base64.b64encode(resp_body).decode('ascii')
-            if debug_enabled:
-                print('--- DEBUG RESPONSE ---')
-                print('Status:', status)
-                print('Response headers:', resp_headers)
-                print('Body length (bytes):', len(resp_body))
-                print('isBase64Encoded: True (returning base64)')
-                print('---')
-            return {
-                'statusCode': status,
-                'headers': resp_headers,
-                'body': b64,
-                'isBase64Encoded': True
-            }
+            body = base64.b64encode(resp_body).decode('ascii')
+            is_base64_response = True
+
+        if debug_enabled:
+            print('--- DEBUG RESPONSE ---')
+            print('Status:', status)
+            print('Response headers:', resp_headers)
+            print('Body length (bytes):', len(resp_body))
+            print('isBase64Encoded:', is_base64_response)
+            print('---')
+
+        return {
+            'statusCode': status,
+            'headers': resp_headers,
+            'body': body,
+            'isBase64Encoded': is_base64_response
+        }
 
     except Exception:
         logger.exception('Unhandled error in lambda_handler')
-        return {
-            'statusCode': 500,
-            'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({'message': 'Internal Server Error'}),
-            'isBase64Encoded': False
-        }
+        return _error_response(500, 'Internal Server Error')
 
 
 if __name__ == '__main__':
