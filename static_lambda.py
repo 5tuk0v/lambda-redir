@@ -5,6 +5,7 @@ import base64
 import hashlib
 import urllib.request
 import urllib.error
+import urllib.parse
 
 LINKED_ASSET_URL = "{{ linked_asset_a_record }}"
 GUARDRAIL_VALUE = os.environ.get('GUARDRAIL_VALUE', '').strip()
@@ -73,11 +74,20 @@ def lambda_handler(event, context):
     url = LINKED_ASSET_URL.rstrip('/') + path
     if event.get('rawQueryString'):
         url += '?' + event['rawQueryString']
+    elif event.get('queryStringParameters'):
+        url += '?' + urllib.parse.urlencode(event['queryStringParameters'])
 
     if is_b64 and body:
         data = base64.b64decode(body)
     elif body:
-        data = body.encode('utf-8') if isinstance(body, str) else body
+        if isinstance(body, str):
+            try:
+                decoded = base64.b64decode(body, validate=True)
+                data = decoded
+            except:
+                data = body.encode('utf-8')
+        else:
+            data = body
     else:
         data = None
 
