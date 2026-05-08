@@ -1,24 +1,27 @@
 # lambda_redir
 
-Goal: small Lambda to proxy/redirect C2 HTTP(S) traffic.
+Transparent HTTP(S) proxy for Cobalt Strike C2 traffic through AWS Lambda.
 
-Deploy:
-- Replace `{{ linked_asset_a_record }}` in `static_lambda.py` at build time (Terraform). This should be the FQDN of your redirector if using one.
-- Replace `{{ guardrail_header }}` in `static_lambda.py` at build time (Terraform), or leave it empty to use `x-amz-security-token`.
-- Set `GUARDRAIL_VALUE` as a Lambda env var, and set `DEBUG` only when you want request and response debug logs.
-- Deploy `static_lambda.py` behind API Gateway (HTTP API v2).
+## Deploy
 
-Runtime:
-- Malleable profile must set the configured guardrail header to the same value as `GUARDRAIL_VALUE` on the Lambda.
-- `DEBUG` is read inside the handler, so toggling the Lambda env var takes effect on the next invocation that lands on a fresh execution environment.
-- Proxy preserves method, query, headers (minus guardrail + AWS infra headers), and body.
-- Lambda automatically prepends `/v2/` to all request paths before forwarding to the C2 server.
-- Guardrail header and AWS infrastructure headers (`x-amzn-trace-id`, `x-forwarded-port`, `x-forwarded-proto`) are stripped before forwarding to avoid leaking redirector details.
-- Avoid fixing the `Host` header to a different address than the public endpoint being contacted; a mismatched `Host` can be rejected before the request ever reaches API Gateway or Lambda.
+1. Replace `{{ linked_asset_a_record }}` with your C2 server FQDN
+2. Set `GUARDRAIL_VALUE` env var on the Lambda (shared secret)
+3. Optionally set `GUARDRAIL_HEADER` env var for the header name (defaults to `x-amz-security-token`, or use placeholder `{{ guardrail_header }}`)
+4. Deploy behind API Gateway (HTTP API v2)
+5. Set `DEBUG=1` env var if you want request/response logging
 
-That's it.
+## How It Works
 
-References: 
-https://cypfer.com/trust-me-im-not-malicious-cobalt-strike-redirectors-using-aws-and-azure/
-https://scottctaylor12.github.io/lambda-function-urls.html
-https://blog.xpnsec.com/aws-lambda-redirector/
+- Validates all requests with the guardrail header before forwarding
+- Preserves HTTP method, query strings, headers, and body
+- Prepends `/v2/` to all paths before forwarding
+- Strips guardrail and AWS infrastructure headers to avoid leaking redirector details
+- Handles binary responses with base64 encoding
+
+## Notes
+
+- Malleable profile must send the same guardrail header and value as configured
+- Avoid fixing the `Host` header to a different value; mismatched hosts are rejected by API Gateway/C2
+- `DEBUG` takes effect on next Lambda invocation after env var change
+
+References: [Cypfer](https://cypfer.com/trust-me-im-not-malicious-cobalt-strike-redirectors-using-aws-and-azure/) • [Scott Taylor](https://scottctaylor12.github.io/lambda-function-urls.html) • [XPN](https://blog.xpnsec.com/aws-lambda-redirector/)
