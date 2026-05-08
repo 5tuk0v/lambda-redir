@@ -43,16 +43,17 @@ def lambda_handler(event, context):
     if DEBUG:
         print(f'[DEBUG] Guardrail validated')
 
-    # Filter out guardrail and AWS infra headers before forwarding
-    aws_headers = {'x-amzn-trace-id', 'x-forwarded-port', 'x-forwarded-proto', GUARDRAIL_HEADER.lower()}
-    forwarded_headers = {k: v for k, v in headers.items() if k.lower() not in aws_headers}
+    # Filter out guardrail, AWS infra, CloudFront, and Host headers before forwarding
+    aws_headers = {'x-amzn-trace-id', 'x-forwarded-port', 'x-forwarded-proto', 'host', 'via', GUARDRAIL_HEADER.lower()}
+    forwarded_headers = {k: v for k, v in headers.items() if k.lower() not in aws_headers and not k.lower().startswith('cloudfront-')}
 
     # 3. RECONSTRUCT: build upstream request
-    if not path.startswith('/v2/'):
+    stage = event.get('requestContext', {}).get('stage', 'v2')
+    if not path.startswith(f'/{stage}/'):
         if path.startswith('/'):
-            path = '/v2' + path
+            path = f'/{stage}' + path
         else:
-            path = '/v2/' + path
+            path = f'/{stage}/' + path
     url = LINKED_ASSET_URL.rstrip('/') + path
     if event.get('rawQueryString'):
         url += '?' + event['rawQueryString']
@@ -63,6 +64,9 @@ def lambda_handler(event, context):
         data = body.encode('utf-8') if isinstance(body, str) else body
     else:
         data = None
+
+    if DEBUG:
+        print(f'[DEBUG] Forwarding headers: {forwarded_headers}')
 
     if DEBUG:
         print(f'[DEBUG] Forwarding to {url}')
@@ -76,7 +80,7 @@ def lambda_handler(event, context):
         resp = e
         status = e.code
         if DEBUG:
-            print(f'[DEBUG] Upstream returned {status}')
+            print(f'[DEBUG] Upstream returned {status}: {resp.url if hasattr(resp, "url") else "N/A"}')
     except urllib.error.URLError:
         if DEBUG:
             print(f'[DEBUG] Network error forwarding request')
@@ -92,6 +96,8 @@ def lambda_handler(event, context):
         is_b64_out = True
 
     if DEBUG:
+        print(f'[DEBUG] Response headers: {dict(resp.headers)}')
+        print(f'[DEBUG] Response body length: {len(resp_body)}')
         print(f'[DEBUG] Response: {status}, {len(resp_body)} bytes')
 
     return {
