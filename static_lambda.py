@@ -10,7 +10,7 @@ GUARDRAIL_VALUE = os.environ.get('GUARDRAIL_VALUE', '').strip()
 GUARDRAIL_HEADER = os.environ.get('GUARDRAIL_HEADER', '{{ guardrail_header }}').strip() or 'x-amz-security-token'
 DEBUG = bool(os.environ.get('DEBUG'))
 
-if not LINKED_ASSET_URL or LINKED_ASSET_URL.startswith('{{'):
+if not LINKED_ASSET_URL or LINKED_ASSET_URL.startswith('{' + '{'):
     print('ERROR: LINKED_ASSET_URL placeholder was not replaced.')
     sys.exit(2)
 if not GUARDRAIL_VALUE:
