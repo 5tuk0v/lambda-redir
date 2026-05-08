@@ -75,7 +75,7 @@ def lambda_handler(event, context):
     if event.get('rawQueryString'):
         url += '?' + event['rawQueryString']
     elif event.get('queryStringParameters'):
-        url += '?' + urllib.parse.urlencode(event['queryStringParameters'])
+        url += '?' + urllib.parse.urlencode(event['queryStringParameters'], safe='=;')
 
     if is_b64 and body:
         data = base64.b64decode(body)
