@@ -3,26 +3,21 @@
 import os
 import json
 import base64
+import sys
 
 # Set env vars before importing the handler
 os.environ['GUARDRAIL_VALUE'] = 'secret-token'
 os.environ['DEBUG'] = '1'
-os.environ['LINKED_ASSET_URL'] = 'https://127.0.0.1'  # Mock upstream
 
-from static_lambda import lambda_handler
-import static_lambda
+# Read static_lambda, replace placeholder, then import
+with open('static_lambda.py', 'r') as f:
+    code = f.read()
+code = code.replace('{{ linked_asset_a_record }}', 'https://127.0.0.1')
+code = code.replace('{{ guardrail_header }}', 'x-amz-security-token')
+
+exec(code, globals())
+
 from unittest.mock import patch, MagicMock
-
-# Override the placeholder with the actual header name for testing
-static_lambda.GUARDRAIL_HEADER = 'x-amz-security-token'
-static_lambda.INFRA_HEADERS = {
-    'x-amzn-trace-id',
-    'x-forwarded-for',
-    'x-forwarded-proto',
-    'x-forwarded-port',
-    'x-amz-apigw-id',
-    'x-amz-security-token',  # guardrail header
-}
 
 # Test case: plain body with guardrail and infra headers
 event = {
@@ -52,7 +47,7 @@ with patch('urllib.request.urlopen') as mock_urlopen:
     mock_resp.headers = {'Content-Type': 'text/plain'}
     mock_resp.read.return_value = b'OK'
     mock_urlopen.return_value = mock_resp
-    
+
     resp = lambda_handler(event, None)
     print(f"Response status: {resp['statusCode']}\n")
 
@@ -81,6 +76,6 @@ with patch('urllib.request.urlopen') as mock_urlopen:
     mock_resp.headers = {'Content-Type': 'application/json'}
     mock_resp.read.return_value = b'{"success": true}'
     mock_urlopen.return_value = mock_resp
-    
+
     resp2 = lambda_handler(event2, None)
     print(f"Response status: {resp2['statusCode']}\n")

@@ -11,9 +11,14 @@ Deploy:
 Runtime:
 - Malleable profile must set the configured guardrail header to the same value as `GUARDRAIL_VALUE` on the Lambda.
 - `DEBUG` is read inside the handler, so toggling the Lambda env var takes effect on the next invocation that lands on a fresh execution environment.
-- Proxy preserves method, query, headers, and body.
+- Proxy preserves method, query, headers (minus guardrail + AWS infra headers), and body.
+- Lambda automatically prepends `/v2/` to all request paths before forwarding to the C2 server.
+- Guardrail header and AWS infrastructure headers (`x-amzn-trace-id`, `x-forwarded-port`, `x-forwarded-proto`) are stripped before forwarding to avoid leaking redirector details.
 - Avoid fixing the `Host` header to a different address than the public endpoint being contacted; a mismatched `Host` can be rejected before the request ever reaches API Gateway or Lambda.
 
 That's it.
 
-Reference: https://cypfer.com/trust-me-im-not-malicious-cobalt-strike-redirectors-using-aws-and-azure/
+References: 
+https://cypfer.com/trust-me-im-not-malicious-cobalt-strike-redirectors-using-aws-and-azure/
+https://scottctaylor12.github.io/lambda-function-urls.html
+https://blog.xpnsec.com/aws-lambda-redirector/
