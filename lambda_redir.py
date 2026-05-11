@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 import base64
 import os
-import ssl
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 LINKED_ASSET_URL = "{{ linked_asset_a_record }}"
 GUARDRAIL_VALUE = os.environ.get('GUARDRAIL_VALUE', '').strip()
 GUARDRAIL_HEADER = os.environ.get('GUARDRAIL_HEADER', '{{ guardrail_header }}').strip() or 'x-amz-security-token'
 DEBUG = bool(os.environ.get('DEBUG'))
-COOKIE_REBUILD_FROM_EVENT = bool(os.environ.get('COOKIE_REBUILD_FROM_EVENT'))
+FILTERED_HEADERS = {'x-amzn-trace-id', 'x-forwarded-port', 'x-forwarded-proto', 'host'}
 
 if not LINKED_ASSET_URL or LINKED_ASSET_URL.startswith('{' + '{'):
     print('ERROR: LINKED_ASSET_URL placeholder was not replaced.')
@@ -23,21 +23,33 @@ if not LINKED_ASSET_URL.startswith(('http://', 'https://')):
     LINKED_ASSET_URL = 'https://' + LINKED_ASSET_URL
 
 
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def http_error_301(self, req, fp, code, msg, hdrs):
+        return fp
+    def http_error_302(self, req, fp, code, msg, hdrs):
+        return fp
+    def http_error_303(self, req, fp, code, msg, hdrs):
+        return fp
+    def http_error_307(self, req, fp, code, msg, hdrs):
+        return fp
+
+
 def lambda_handler(event, context):
-    method = event['requestContext']['http']['method']
-    path = event['rawPath']
-    query_string = event.get('rawQueryString')
+    if DEBUG:
+        print(f'[DEBUG] Full event: {event}')
+
+    method = event['httpMethod']
+    path = event['path']
+    query_params = event.get('queryStringParameters')
+    query_string = urllib.parse.urlencode(query_params) if query_params else None
+
     headers = event.get('headers', {})
     body = event.get('body')
-    is_base64_encoded = event['isBase64Encoded']
+    is_base64_encoded = event.get('isBase64Encoded', False)
     stage = event.get('requestContext', {}).get('stage', 'v2')
 
     if DEBUG:
-        print(f'[DEBUG] Full event: {event}')
         print(f'[DEBUG] {method} {path}')
-        if 'Cookie' in headers or 'cookie' in headers:
-            cookie_key = 'Cookie' if 'Cookie' in headers else 'cookie'
-            print(f'[DEBUG] Original Cookie header: {headers[cookie_key]}')
 
     guardrail = next((v for k, v in headers.items() if k.lower() == GUARDRAIL_HEADER.lower()), None)
     if guardrail != GUARDRAIL_VALUE:
@@ -54,10 +66,7 @@ def lambda_handler(event, context):
         else:
             path = f'/{stage}/' + path
 
-    if query_string:
-        upstream_url = f'{LINKED_ASSET_URL}{path}?{query_string}'
-    else:
-        upstream_url = f'{LINKED_ASSET_URL}{path}'
+    upstream_url = f"{LINKED_ASSET_URL}{path}" + (f"?{query_string}" if query_string else "")
 
     if is_base64_encoded and body:
         try:
@@ -68,18 +77,8 @@ def lambda_handler(event, context):
     forwarded_headers = {
         k: v
         for k, v in headers.items()
-        if k.lower() not in ['x-amzn-trace-id', 'x-forwarded-port', 'x-forwarded-proto', 'host', GUARDRAIL_HEADER.lower()]
+        if k.lower() not in FILTERED_HEADERS and k.lower() != GUARDRAIL_HEADER.lower()
     }
-
-    if COOKIE_REBUILD_FROM_EVENT:
-        event_cookies = event.get('cookies')
-        if isinstance(event_cookies, list) and event_cookies:
-            cookie_parts = [str(cookie).strip() for cookie in event_cookies if str(cookie).strip()]
-            if cookie_parts:
-                cookie_header_key = next((k for k in forwarded_headers if k.lower() == 'cookie'), 'Cookie')
-                forwarded_headers[cookie_header_key] = '; '.join(cookie_parts)
-                if DEBUG:
-                    print(f'[DEBUG] Rebuilt Cookie from event.cookies: {forwarded_headers[cookie_header_key]}')
 
     if DEBUG:
         print(f'*** Beacon -> TS ***\nMethod: {method}\nURL: {upstream_url}\nHeaders: {forwarded_headers}\nBody: {body}\nisBase64Encoded: {is_base64_encoded}')
@@ -96,10 +95,10 @@ def lambda_handler(event, context):
         method=method,
     )
 
-    ssl_context = ssl._create_unverified_context()
+    opener = urllib.request.build_opener(NoRedirectHandler())
 
     try:
-        response = urllib.request.urlopen(request, timeout=10, context=ssl_context)
+        response = opener.open(request, timeout=10)
         status = response.status
     except urllib.error.HTTPError as error:
         response = error
@@ -109,13 +108,29 @@ def lambda_handler(event, context):
         return {'statusCode': 403}
 
     response_body = response.read()
-    response_text = response_body.decode('utf-8')
+
+    try:
+        response_text = response_body.decode('utf-8')
+        is_text = True
+    except UnicodeDecodeError:
+        response_text = None
+        is_text = False
 
     if DEBUG:
-        print(f'*** Beacon <- TS ***\nStatus code: {status}\nHeaders: {dict(response.headers)}\nBody: {response_text}\n')
+        debug_body = response_text if is_text else f'<binary: {len(response_body)} bytes>'
+        print(f'*** Beacon <- TS ***\nStatus code: {status}\nHeaders: {dict(response.headers)}\nBody: {debug_body}\n')
 
-    return {
-        'statusCode': status,
-        'headers': dict(response.headers),
-        'body': response_text,
-    }
+    if is_text:
+        return {
+            'statusCode': status,
+            'headers': dict(response.headers),
+            'body': response_text,
+            'isBase64Encoded': False,
+        }
+    else:
+        return {
+            'statusCode': status,
+            'headers': dict(response.headers),
+            'body': base64.b64encode(response_body).decode('utf-8'),
+            'isBase64Encoded': True,
+        }

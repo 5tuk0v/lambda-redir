@@ -2,13 +2,13 @@
 
 Transparent HTTP(S) proxy for Cobalt Strike C2 traffic through AWS Lambda.
 
-## Deploy
+## Setup
 
 1. Replace `{{ linked_asset_a_record }}` with your C2 server FQDN
-2. Set `GUARDRAIL_VALUE` env var on the Lambda (shared secret)
-3. Optionally set `GUARDRAIL_HEADER` env var for the header name (defaults to `x-amz-security-token`, or use placeholder `{{ guardrail_header }}`)
+2. Set `GUARDRAIL_VALUE` env var on Lambda (shared secret)
+3. Optionally set `GUARDRAIL_HEADER` env var (defaults to `x-amz-security-token`)
 4. Deploy behind API Gateway (HTTP API v2)
-5. Set `DEBUG=1` env var if you want request/response logging
+5. Optionally set `DEBUG=1` for request/response logging
 
 ## How It Works
 
@@ -16,13 +16,29 @@ Transparent HTTP(S) proxy for Cobalt Strike C2 traffic through AWS Lambda.
 - Preserves HTTP method, query strings, and body
 - Prepends the API Gateway stage to paths (e.g., `/v2/`) before forwarding
 - Strips guardrail, AWS infrastructure, and CloudFront headers before forwarding
-- Handles binary responses with base64 encoding
+- Handles both text and binary responses
+
+## Malleable Profile Requirements
+
+**Critical:** All outputs must be base64-encoded. Raw binary data will be corrupted by API Gateway.
+
+In your profile, add `base64;` to all `output` blocks:
+
+```
+server {
+    output {
+        base64;        # Always include this
+        prepend "{...}";
+        print;
+    }
+}
+```
+
+This ensures data is valid UTF-8 for API Gateway transport.
 
 ## Notes
 
-- Malleable profile must send the same guardrail header and value as configured
-- `DEBUG` env var enables full event/request/response logging
-- All requests are validated before forwarding to avoid exposing the C2 server
-- Malleable profiles must not include hardcoded Host headers; API Gateway will reject requests with Host header mismatches during TLS handshake
+- Malleable profile must send the same guardrail header as configured
+- C2 server can be private (VPC) or public (opsec choice)
 
 References: [Cypfer](https://cypfer.com/trust-me-im-not-malicious-cobalt-strike-redirectors-using-aws-and-azure/) • [Scott Taylor](https://scottctaylor12.github.io/lambda-function-urls.html) • [XPN](https://blog.xpnsec.com/aws-lambda-redirector/)
