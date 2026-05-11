@@ -16,7 +16,6 @@ Transparent HTTP(S) proxy for Cobalt Strike C2 traffic through AWS Lambda.
 - Preserves HTTP method, query strings, and body
 - Prepends the API Gateway stage to paths (e.g., `/v2/`) before forwarding
 - Strips guardrail, AWS infrastructure, and CloudFront headers before forwarding
-- Auto-generates correct `Host` header based on upstream URL
 - Handles binary responses with base64 encoding
 
 ## Notes
@@ -24,5 +23,6 @@ Transparent HTTP(S) proxy for Cobalt Strike C2 traffic through AWS Lambda.
 - Malleable profile must send the same guardrail header and value as configured
 - `DEBUG` env var enables full event/request/response logging
 - All requests are validated before forwarding to avoid exposing the C2 server
+- Malleable profiles must not include hardcoded Host headers; API Gateway will reject requests with Host header mismatches during TLS handshake
 
 References: [Cypfer](https://cypfer.com/trust-me-im-not-malicious-cobalt-strike-redirectors-using-aws-and-azure/) • [Scott Taylor](https://scottctaylor12.github.io/lambda-function-urls.html) • [XPN](https://blog.xpnsec.com/aws-lambda-redirector/)
