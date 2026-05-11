@@ -22,7 +22,21 @@ Transparent HTTP(S) proxy for Cobalt Strike C2 traffic through AWS Lambda.
 
 **Critical:** All outputs must be base64-encoded. Raw binary data will be corrupted by API Gateway.
 
-In your profile, add `base64;` to all `output` blocks:
+**URIs:** All `set uri` directives must include the stage prefix (typically `/v2/`). Example:
+
+```
+http-get {
+    set uri "/v2/api/fetch";
+    ...
+}
+
+http-post {
+    set uri "/v2/api/telemetry";
+    ...
+}
+```
+
+**Output encoding:** Add `base64;` to all `output` blocks:
 
 ```
 server {
@@ -35,6 +49,8 @@ server {
 ```
 
 This ensures data is valid UTF-8 for API Gateway transport.
+
+**Example:** See `mal_profiles/xpn-json-v2.profile` for a known-working profile template.
 
 ## Notes
 
