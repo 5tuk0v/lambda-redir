@@ -4,9 +4,9 @@ Transparent HTTP(S) proxy for Cobalt Strike C2 traffic through AWS Lambda.
 
 ## Setup
 
-1. Replace `{{ linked_asset_a_record }}` with your C2 server FQDN
+1. Replace `{{ linked_asset_a_record }}` with your upstream server (C2, redirector, or other target)
 2. Set `GUARDRAIL_VALUE` env var on Lambda (shared secret)
-3. Optionally set `GUARDRAIL_HEADER` env var (defaults to `x-amz-security-token`)
+3. Optionally set `GUARDRAIL_HEADER` env var (defaults to `x-amz-security-token`). Can also be configured via Terraform variable `{{ guardrail_header }}`
 4. Deploy behind API Gateway (HTTP API v2)
 5. Optionally set `DEBUG=1` for request/response logging
 
@@ -50,11 +50,13 @@ server {
 
 This ensures data is valid UTF-8 for API Gateway transport.
 
-**Example:** See `mal_profiles/xpn-json-v2.profile` for a known-working profile template.
+**Example:** See `mal_profiles/xpn-json-v2.profile` for a known-working Cobalt Strike malleable profile template.
 
 ## Notes
 
 - Malleable profile must send the same guardrail header as configured
 - C2 server can be private (VPC) or public (opsec choice)
+- Tested with Cobalt Strike and a limited profile set. Given the infinite malleable profile options available, adjustments may be needed for other profiles
+- Tested with Outflank C2 (OC2). Ensure implants are generated with the correct guardrail header and API Gateway endpoint URL
 
 References: [Cypfer](https://cypfer.com/trust-me-im-not-malicious-cobalt-strike-redirectors-using-aws-and-azure/) • [Scott Taylor](https://scottctaylor12.github.io/lambda-function-urls.html) • [XPN](https://blog.xpnsec.com/aws-lambda-redirector/)

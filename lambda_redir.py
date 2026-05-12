@@ -22,17 +22,15 @@ if not GUARDRAIL_VALUE:
 if not LINKED_ASSET_URL.startswith(('http://', 'https://')):
     LINKED_ASSET_URL = 'https://' + LINKED_ASSET_URL
 
-
 class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     def http_error_301(self, req, fp, code, msg, hdrs):
-        return fp
+        raise urllib.error.HTTPError(req.full_url, code, msg, hdrs, fp)
     def http_error_302(self, req, fp, code, msg, hdrs):
-        return fp
+        raise urllib.error.HTTPError(req.full_url, code, msg, hdrs, fp)
     def http_error_303(self, req, fp, code, msg, hdrs):
-        return fp
+        raise urllib.error.HTTPError(req.full_url, code, msg, hdrs, fp)
     def http_error_307(self, req, fp, code, msg, hdrs):
-        return fp
-
+        raise urllib.error.HTTPError(req.full_url, code, msg, hdrs, fp)
 
 def lambda_handler(event, context):
     if DEBUG:
@@ -47,9 +45,6 @@ def lambda_handler(event, context):
     body = event.get('body')
     is_base64_encoded = event.get('isBase64Encoded', False)
     stage = event.get('requestContext', {}).get('stage', 'v2')
-
-    if DEBUG:
-        print(f'[DEBUG] {method} {path}')
 
     guardrail = next((v for k, v in headers.items() if k.lower() == GUARDRAIL_HEADER.lower()), None)
     if guardrail != GUARDRAIL_VALUE:
@@ -100,14 +95,15 @@ def lambda_handler(event, context):
     try:
         response = opener.open(request, timeout=10)
         status = response.status
+        response_body = response.read()
+        response_headers = response.headers
     except urllib.error.HTTPError as error:
-        response = error
         status = error.code
+        response_body = error.read()
+        response_headers = error.headers
     except urllib.error.URLError as error:
         print(f'[!] Failed to forward request to TS: {str(error)}')
         return {'statusCode': 403}
-
-    response_body = response.read()
 
     try:
         response_text = response_body.decode('utf-8')
@@ -118,19 +114,19 @@ def lambda_handler(event, context):
 
     if DEBUG:
         debug_body = response_text if is_text else f'<binary: {len(response_body)} bytes>'
-        print(f'*** Beacon <- TS ***\nStatus code: {status}\nHeaders: {dict(response.headers)}\nBody: {debug_body}\n')
+        print(f'*** Beacon <- TS ***\nStatus code: {status}\nHeaders: {dict(response_headers)}\nBody: {debug_body}\n')
 
     if is_text:
         return {
             'statusCode': status,
-            'headers': dict(response.headers),
+            'headers': dict(response_headers),
             'body': response_text,
             'isBase64Encoded': False,
         }
     else:
         return {
             'statusCode': status,
-            'headers': dict(response.headers),
+            'headers': dict(response_headers),
             'body': base64.b64encode(response_body).decode('utf-8'),
             'isBase64Encoded': True,
         }
