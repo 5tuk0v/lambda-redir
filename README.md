@@ -1,13 +1,13 @@
 # lambda_redir
 
-Transparent HTTP(S) proxy for Cobalt Strike C2 traffic through AWS Lambda.
+Transparent HTTP(S) proxy for C2 traffic through AWS Lambda.
 
 ## Setup
 
 1. Replace `{{ linked_asset_a_record }}` with your upstream server (C2, redirector, or other target)
 2. Set `GUARDRAIL_VALUE` env var on Lambda (shared secret)
 3. Optionally set `GUARDRAIL_HEADER` env var (defaults to `x-amz-security-token`). Can also be configured via Terraform variable `{{ guardrail_header }}`
-4. Deploy behind API Gateway (HTTP API v2)
+4. Deploy behind API Gateway (REST API proxy / API Gateway v1). This project was tested with API Gateway REST API (`aws_api_gateway_rest_api`) using a stage named `v2` (so paths are prefixed with `/v2/`).
 5. Optionally set `DEBUG=1` for request/response logging
 
 ## How It Works
@@ -55,7 +55,7 @@ This ensures data is valid UTF-8 for API Gateway transport.
 ## Notes
 
 - Malleable profile must send the same guardrail header as configured
-- C2 server can be private (VPC) or public (opsec choice)
+- Upstream server can be private (within a VPC) or public. If the upstream is private, configure the Lambda to access that VPC (attach appropriate subnets and security groups) and ensure networking and IAM are set so the function can reach the upstream host.
 - Tested with Cobalt Strike and a limited profile set. Given the infinite malleable profile options available, adjustments may be needed for other profiles
 - Tested with Outflank C2 (OC2). Ensure implants are generated with the correct guardrail header and API Gateway endpoint URL
 
