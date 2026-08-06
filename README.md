@@ -59,4 +59,14 @@ This ensures data is valid UTF-8 for API Gateway transport.
 - Tested with Cobalt Strike and a limited profile set. Given the infinite malleable profile options available, adjustments may be needed for other profiles
 - Tested with Outflank C2 (OC2). Ensure implants are generated with the correct guardrail header and API Gateway endpoint URL
 
+## AI Assistance Disclosure
+
+This project was developed by **5tuk0v** with substantial assistance from AI
+coding tools, including **OpenCode** and **OpenAI Codex**, using multiple
+models. The exact models and versions used were not consistently recorded.
+
+AI assistance included implementation, debugging, testing, documentation, and
+code review. All AI-assisted contributions were directed and reviewed by the
+maintainer, who remains responsible for the final result.
+
 References: [Cypfer](https://cypfer.com/trust-me-im-not-malicious-cobalt-strike-redirectors-using-aws-and-azure/) • [Scott Taylor](https://scottctaylor12.github.io/lambda-function-urls.html) • [XPN](https://blog.xpnsec.com/aws-lambda-redirector/)
