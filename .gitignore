@@ -48,3 +48,5 @@ htmlcov/
 # Deployment artifacts
 *.pyc
 
+# Internal design notes
+COMPATIBILITY_AND_HARDENING.md

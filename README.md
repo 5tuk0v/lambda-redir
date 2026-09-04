@@ -1,28 +1,28 @@
 # lambda_redir
 
-Transparent HTTP(S) proxy for C2 traffic through AWS Lambda.
+HTTP(S) application proxy for C2 traffic through AWS Lambda.
 
 ## Setup
 
 1. Replace `{{ linked_asset_a_record }}` with your upstream server (C2, redirector, or other target)
 2. Set `GUARDRAIL_VALUE` env var on Lambda (shared secret)
-3. Optionally set `GUARDRAIL_HEADER` env var (defaults to `x-amz-security-token`). Can also be configured via Terraform variable `{{ guardrail_header }}`
-4. Deploy behind API Gateway (REST API proxy / API Gateway v1). This project was tested with API Gateway REST API (`aws_api_gateway_rest_api`) using a stage named `v2` (so paths are prefixed with `/v2/`).
-5. Optionally set `DEBUG=1` for request/response logging
+3. Set `GUARDRAIL_HEADER`, or ensure the deployment replaces `{{ guardrail_header }}`. Use `x-amz-security-token` when no custom header is required
+4. Deploy behind API Gateway REST API (proxy integration / payload v1). The tested configuration uses a stage named `v2`
+5. Optionally set `DEBUG=1` for verbose test logging. This logs headers and payloads and should not be enabled in normal operation. Unset `DEBUG` to disable it
 
 ## How It Works
 
 - Validates all requests with the guardrail header before forwarding
-- Preserves HTTP method, query strings, and body
+- Forwards the HTTP method, ordinary query parameters, headers, and body
 - Prepends the API Gateway stage to paths (e.g., `/v2/`) before forwarding
-- Strips guardrail, AWS infrastructure, and CloudFront headers before forwarding
+- Removes the guardrail and selected infrastructure headers before forwarding
 - Handles both text and binary responses
 
 ## Malleable Profile Requirements
 
-**Critical:** All outputs must be base64-encoded. Raw binary data will be corrupted by API Gateway.
+Use text-safe `base64` or `base64url` transforms for profile output. Raw binary output requires compatible API Gateway binary-media configuration and explicit testing.
 
-**URIs:** All `set uri` directives must include the stage prefix (typically `/v2/`). Example:
+**URIs:** Include the API Gateway stage prefix in client-facing URIs when required by the deployed endpoint. The Lambda adds the detected stage to the upstream path when it is absent. Example for the tested `v2` stage:
 
 ```
 http-get {
@@ -36,19 +36,19 @@ http-post {
 }
 ```
 
-**Output encoding:** Add `base64;` to all `output` blocks:
+**Output encoding:** Use a text-safe base64-family transform in output blocks:
 
 ```
 server {
     output {
-        base64;        # Always include this
+        base64;
         prepend "{...}";
         print;
     }
 }
 ```
 
-This ensures data is valid UTF-8 for API Gateway transport.
+This keeps profile output text-safe for API Gateway transport.
 
 **Example:** See `mal_profiles/xpn-json-v2.profile` for a known-working Cobalt Strike malleable profile template.
 
@@ -56,7 +56,7 @@ This ensures data is valid UTF-8 for API Gateway transport.
 
 - Malleable profile must send the same guardrail header as configured
 - Upstream server can be private (within a VPC) or public. If the upstream is private, configure the Lambda to access that VPC (attach appropriate subnets and security groups) and ensure networking and IAM are set so the function can reach the upstream host.
-- Tested with Cobalt Strike and a limited profile set. Given the infinite malleable profile options available, adjustments may be needed for other profiles
+- Tested with Cobalt Strike and a limited profile set. Profiles that depend on duplicate query parameters or headers, exact header ordering, or exact wire representation require additional testing
 - Tested with Outflank C2 (OC2). Ensure implants are generated with the correct guardrail header and API Gateway endpoint URL
 
 ## AI Assistance Disclosure
