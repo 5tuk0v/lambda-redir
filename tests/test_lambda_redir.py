@@ -37,13 +37,14 @@ class FakeResponse:
         return self._body
 
 
-def gateway_event(method, path, headers=None, query=None, body=None,
-                  is_base64_encoded=False):
+def gateway_event(method, path, headers=None, query=None, multi_query=None,
+                  body=None, is_base64_encoded=False):
     return {
         'httpMethod': method,
         'path': path,
         'headers': headers or {},
         'queryStringParameters': query,
+        'multiValueQueryStringParameters': multi_query,
         'body': body,
         'isBase64Encoded': is_base64_encoded,
         'requestContext': {'stage': 'v2'},
@@ -141,6 +142,27 @@ class LambdaRedirRegressionTests(unittest.TestCase):
         self.assertEqual(request.data, body.encode('utf-8'))
         self.assertEqual(result['statusCode'], 200)
         self.assertFalse(result['isBase64Encoded'])
+
+    def test_duplicate_query_parameters_are_forwarded_without_data_loss(self):
+        event = gateway_event(
+            'GET',
+            '/api/fetch',
+            headers=valid_headers(),
+            query={'id': 'second'},
+            multi_query={'id': ['first', 'second'], 'mode': ['full']},
+        )
+
+        _, opener = self.call_handler(
+            event,
+            FakeResponse(200, b'{"version":"2","count":"1","data":""}'),
+        )
+
+        request = opener.open.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            'https://upstream.example.test/v2/api/fetch?'
+            'id=first&id=second&mode=full',
+        )
 
     def test_large_post_result_is_not_truncated(self):
         report = 'A' * 48000

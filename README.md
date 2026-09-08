@@ -13,7 +13,7 @@ HTTP(S) application proxy for C2 traffic through AWS Lambda.
 ## How It Works
 
 - Validates all requests with the guardrail header before forwarding
-- Forwards the HTTP method, ordinary query parameters, headers, and body
+- Forwards the HTTP method, query parameters (including repeated values), headers, and body
 - Prepends the API Gateway stage to paths (e.g., `/v2/`) before forwarding
 - Removes the guardrail and selected infrastructure headers before forwarding
 - Handles both text and binary responses
@@ -56,7 +56,7 @@ This keeps profile output text-safe for API Gateway transport.
 
 - Malleable profile must send the same guardrail header as configured
 - Upstream server can be private (within a VPC) or public. If the upstream is private, configure the Lambda to access that VPC (attach appropriate subnets and security groups) and ensure networking and IAM are set so the function can reach the upstream host.
-- Tested with Cobalt Strike and a limited profile set. Profiles that depend on duplicate query parameters or headers, exact header ordering, or exact wire representation require additional testing
+- Tested with Cobalt Strike and a limited profile set. Profiles that depend on duplicate headers, exact header ordering, or exact wire representation require additional testing
 - Tested with Outflank C2 (OC2). Ensure implants are generated with the correct guardrail header and API Gateway endpoint URL
 
 ## AI Assistance Disclosure

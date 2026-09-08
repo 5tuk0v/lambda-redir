@@ -38,8 +38,14 @@ def lambda_handler(event, context):
 
     method = event['httpMethod']
     path = event['path']
-    query_params = event.get('queryStringParameters')
-    query_string = urllib.parse.urlencode(query_params) if query_params else None
+    query_params = (
+        event.get('multiValueQueryStringParameters')
+        or event.get('queryStringParameters')
+    )
+    query_string = (
+        urllib.parse.urlencode(query_params, doseq=True)
+        if query_params else None
+    )
 
     headers = event.get('headers', {})
     body = event.get('body')
