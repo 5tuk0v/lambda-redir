@@ -12,7 +12,7 @@ HTTP(S) application proxy for C2 traffic through AWS Lambda.
 
 ## How It Works
 
-- Validates all requests with the guardrail header before forwarding
+- Requires exactly one matching guardrail header value before forwarding
 - Forwards the HTTP method, query parameters (including repeated values), headers, and body
 - Prepends the API Gateway stage to paths (e.g., `/v2/`) before forwarding
 - Removes the guardrail and selected infrastructure headers before forwarding

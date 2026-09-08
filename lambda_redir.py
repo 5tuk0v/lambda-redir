@@ -34,6 +34,26 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     def http_error_308(self, req, fp, code, msg, hdrs):
         raise urllib.error.HTTPError(req.full_url, code, msg, hdrs, fp)
 
+def get_header_values(event, header_name):
+    multi_value_headers = event.get('multiValueHeaders') or {}
+    values = []
+    for name, header_values in multi_value_headers.items():
+        if name.lower() != header_name.lower():
+            continue
+        if isinstance(header_values, (list, tuple)):
+            values.extend(header_values)
+        else:
+            values.append(header_values)
+
+    if values:
+        return values
+
+    return [
+        value
+        for name, value in (event.get('headers') or {}).items()
+        if name.lower() == header_name.lower()
+    ]
+
 def lambda_handler(event, context):
     if DEBUG:
         print(f'[DEBUG] Full event: {event}')
@@ -54,7 +74,8 @@ def lambda_handler(event, context):
     is_base64_encoded = event.get('isBase64Encoded', False)
     stage = event.get('requestContext', {}).get('stage', 'v2')
 
-    guardrail = next((v for k, v in headers.items() if k.lower() == GUARDRAIL_HEADER.lower()), None)
+    guardrail_values = get_header_values(event, GUARDRAIL_HEADER)
+    guardrail = guardrail_values[0] if len(guardrail_values) == 1 else None
     if guardrail != GUARDRAIL_VALUE:
         if DEBUG:
             print(f'[DEBUG] Guardrail check failed: got {guardrail!r}')

@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import email.message
 import importlib
 import io
 import os
@@ -37,12 +38,14 @@ class FakeResponse:
         return self._body
 
 
-def gateway_event(method, path, headers=None, query=None, multi_query=None,
-                  body=None, is_base64_encoded=False, stage='v2'):
+def gateway_event(method, path, headers=None, multi_headers=None, query=None,
+                  multi_query=None, body=None, is_base64_encoded=False,
+                  stage='v2'):
     return {
         'httpMethod': method,
         'path': path,
         'headers': headers or {},
+        'multiValueHeaders': multi_headers,
         'queryStringParameters': query,
         'multiValueQueryStringParameters': multi_query,
         'body': body,
@@ -76,6 +79,94 @@ class LambdaRedirRegressionTests(unittest.TestCase):
 
     def test_rejects_missing_guardrail_before_creating_an_upstream_request(self):
         event = gateway_event('GET', '/api/fetch', headers={'User-Agent': 'fixture'})
+
+        with patch.object(handler.urllib.request, 'build_opener') as build_opener:
+            result = handler.lambda_handler(event, None)
+
+        self.assertEqual(result, {'statusCode': 403, 'body': 'Forbidden'})
+        build_opener.assert_not_called()
+
+    def test_rejects_incorrect_guardrail_before_upstream_request(self):
+        event = gateway_event(
+            'GET',
+            '/api/fetch',
+            headers={'x-amz-security-token': 'incorrect'},
+        )
+
+        with patch.object(handler.urllib.request, 'build_opener') as build_opener:
+            result = handler.lambda_handler(event, None)
+
+        self.assertEqual(result, {'statusCode': 403, 'body': 'Forbidden'})
+        build_opener.assert_not_called()
+
+    def test_guardrail_header_name_is_case_insensitive(self):
+        event = gateway_event(
+            'GET',
+            '/api/fetch',
+            headers=valid_headers(**{
+                'x-amz-security-token': 'replaced-below',
+            }),
+        )
+        event['headers'].pop('x-amz-security-token')
+        event['headers']['X-AmZ-SeCuRiTy-ToKeN'] = 'fixture-guardrail'
+
+        result, opener = self.call_handler(
+            event,
+            FakeResponse(200, b'{"version":"2","count":"1","data":""}'),
+        )
+
+        self.assertEqual(result['statusCode'], 200)
+        self.assertEqual(opener.open.call_count, 1)
+
+    def test_rejects_ambiguous_multi_value_guardrail(self):
+        event = gateway_event(
+            'GET',
+            '/api/fetch',
+            headers=valid_headers(),
+            multi_headers={
+                'x-amz-security-token': [
+                    'fixture-guardrail',
+                    'conflicting-value',
+                ],
+            },
+        )
+
+        with patch.object(handler.urllib.request, 'build_opener') as build_opener:
+            result = handler.lambda_handler(event, None)
+
+        self.assertEqual(result, {'statusCode': 403, 'body': 'Forbidden'})
+        build_opener.assert_not_called()
+
+    def test_accepts_one_multi_value_guardrail(self):
+        event = gateway_event(
+            'GET',
+            '/api/fetch',
+            headers=valid_headers(),
+            multi_headers={
+                'X-AmZ-SeCuRiTy-ToKeN': ['fixture-guardrail'],
+            },
+        )
+
+        result, opener = self.call_handler(
+            event,
+            FakeResponse(200, b'{"version":"2","count":"1","data":""}'),
+        )
+
+        self.assertEqual(result['statusCode'], 200)
+        self.assertEqual(opener.open.call_count, 1)
+
+    def test_rejects_identical_duplicate_guardrail_values(self):
+        event = gateway_event(
+            'GET',
+            '/api/fetch',
+            headers=valid_headers(),
+            multi_headers={
+                'x-amz-security-token': [
+                    'fixture-guardrail',
+                    'fixture-guardrail',
+                ],
+            },
+        )
 
         with patch.object(handler.urllib.request, 'build_opener') as build_opener:
             result = handler.lambda_handler(event, None)
@@ -260,6 +351,27 @@ class LambdaRedirRegressionTests(unittest.TestCase):
         self.assertEqual(result['statusCode'], 200)
         self.assertTrue(result['isBase64Encoded'])
         self.assertEqual(base64.b64decode(result['body']), upstream_body)
+
+    @unittest.expectedFailure
+    def test_repeated_response_headers_use_multi_value_envelope(self):
+        response_headers = email.message.Message()
+        response_headers['Content-Type'] = 'text/plain'
+        response_headers['Set-Cookie'] = 'first=value1; Path=/'
+        response_headers['Set-Cookie'] = 'second=value2; Path=/'
+        event = gateway_event('GET', '/api/fetch', headers=valid_headers())
+
+        result, _ = self.call_handler(
+            event,
+            FakeResponse(200, b'ok', response_headers),
+        )
+
+        self.assertEqual(result['headers'], {'Content-Type': 'text/plain'})
+        self.assertEqual(result['multiValueHeaders'], {
+            'Set-Cookie': [
+                'first=value1; Path=/',
+                'second=value2; Path=/',
+            ],
+        })
 
     def test_upstream_http_error_is_returned_to_the_client(self):
         event = gateway_event('GET', '/api/fetch', headers=valid_headers())
