@@ -57,6 +57,7 @@ This keeps profile output text-safe for API Gateway transport.
 - Malleable profile must send the same guardrail header as configured
 - Upstream server can be private (within a VPC) or public. If the upstream is private, configure the Lambda to access that VPC (attach appropriate subnets and security groups) and ensure networking and IAM are set so the function can reach the upstream host.
 - Tested with Cobalt Strike and a limited profile set. Profiles that depend on duplicate headers, exact header ordering, or exact wire representation require additional testing
+- Repeated query values were validated through the REST API v1 integration and a live end-to-end test
 - Tested with Outflank C2 (OC2). Ensure implants are generated with the correct guardrail header and API Gateway endpoint URL
 
 ## AI Assistance Disclosure

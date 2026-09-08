@@ -38,7 +38,7 @@ class FakeResponse:
 
 
 def gateway_event(method, path, headers=None, query=None, multi_query=None,
-                  body=None, is_base64_encoded=False):
+                  body=None, is_base64_encoded=False, stage='v2'):
     return {
         'httpMethod': method,
         'path': path,
@@ -47,7 +47,7 @@ def gateway_event(method, path, headers=None, query=None, multi_query=None,
         'multiValueQueryStringParameters': multi_query,
         'body': body,
         'isBase64Encoded': is_base64_encoded,
-        'requestContext': {'stage': 'v2'},
+        'requestContext': {'stage': stage},
     }
 
 
@@ -164,6 +164,53 @@ class LambdaRedirRegressionTests(unittest.TestCase):
             'id=first&id=second&mode=full',
         )
 
+    def test_stage_is_added_to_an_unprefixed_path(self):
+        event = gateway_event('GET', '/api/fetch', headers=valid_headers())
+
+        _, opener = self.call_handler(
+            event,
+            FakeResponse(200, b'{"version":"2","count":"1","data":""}'),
+        )
+
+        request = opener.open.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            'https://upstream.example.test/v2/api/fetch',
+        )
+
+    def test_existing_stage_prefix_is_not_added_twice(self):
+        event = gateway_event('GET', '/v2/api/fetch', headers=valid_headers())
+
+        _, opener = self.call_handler(
+            event,
+            FakeResponse(200, b'{"version":"2","count":"1","data":""}'),
+        )
+
+        request = opener.open.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            'https://upstream.example.test/v2/api/fetch',
+        )
+
+    def test_event_stage_is_used_instead_of_the_v2_fallback(self):
+        event = gateway_event(
+            'GET',
+            '/api/fetch',
+            headers=valid_headers(),
+            stage='canary',
+        )
+
+        _, opener = self.call_handler(
+            event,
+            FakeResponse(200, b'{"version":"2","count":"1","data":""}'),
+        )
+
+        request = opener.open.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            'https://upstream.example.test/canary/api/fetch',
+        )
+
     def test_large_post_result_is_not_truncated(self):
         report = 'A' * 48000
         body = f'{{"version":"2","report":"{report}"}}'
@@ -235,6 +282,85 @@ class LambdaRedirRegressionTests(unittest.TestCase):
             'body': 'not found',
             'isBase64Encoded': False,
         })
+
+    def test_redirect_responses_are_returned_without_following(self):
+        for status in (301, 302, 303, 307):
+            with self.subTest(status=status):
+                redirect_handler = handler.NoRedirectHandler()
+                redirect_method = getattr(
+                    redirect_handler,
+                    f'http_error_{status}',
+                )
+                with self.assertRaises(urllib.error.HTTPError):
+                    redirect_method(
+                        Mock(full_url=(
+                            'https://upstream.example.test/v2/api/fetch'
+                        )),
+                        io.BytesIO(b''),
+                        status,
+                        'Redirect',
+                        {'Location': 'https://elsewhere.example.test/'},
+                    )
+
+                event = gateway_event('GET', '/api/fetch', headers=valid_headers())
+                opener = Mock()
+                opener.open.side_effect = urllib.error.HTTPError(
+                    'https://upstream.example.test/v2/api/fetch',
+                    status,
+                    'Redirect',
+                    {'Location': 'https://elsewhere.example.test/'},
+                    io.BytesIO(b''),
+                )
+
+                with patch.object(
+                        handler.urllib.request,
+                        'build_opener',
+                        return_value=opener):
+                    result = handler.lambda_handler(event, None)
+
+                self.assertEqual(result['statusCode'], status)
+                self.assertEqual(
+                    result['headers']['Location'],
+                    'https://elsewhere.example.test/',
+                )
+                self.assertEqual(opener.open.call_count, 1)
+
+    def test_308_redirect_is_not_followed(self):
+        redirect_handler = handler.NoRedirectHandler()
+        request = Mock(full_url='https://upstream.example.test/v2/api/fetch')
+
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            redirect_handler.http_error_308(
+                request,
+                io.BytesIO(b''),
+                308,
+                'Permanent Redirect',
+                {'Location': 'https://elsewhere.example.test/'},
+            )
+
+        self.assertEqual(raised.exception.code, 308)
+
+    def test_upstream_network_errors_keep_the_legacy_403_response(self):
+        failures = {
+            'connection refused': ConnectionRefusedError('fixture refused'),
+            'dns failure': OSError('fixture name resolution failed'),
+            'tls failure': OSError('fixture certificate rejected'),
+            'timeout': TimeoutError('fixture timed out'),
+        }
+
+        for name, reason in failures.items():
+            with self.subTest(failure=name):
+                event = gateway_event('GET', '/api/fetch', headers=valid_headers())
+                opener = Mock()
+                opener.open.side_effect = urllib.error.URLError(reason)
+
+                with patch.object(
+                        handler.urllib.request,
+                        'build_opener',
+                        return_value=opener):
+                    result = handler.lambda_handler(event, None)
+
+                self.assertEqual(result, {'statusCode': 403})
 
 
 if __name__ == '__main__':

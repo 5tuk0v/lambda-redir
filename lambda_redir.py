@@ -31,6 +31,8 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         raise urllib.error.HTTPError(req.full_url, code, msg, hdrs, fp)
     def http_error_307(self, req, fp, code, msg, hdrs):
         raise urllib.error.HTTPError(req.full_url, code, msg, hdrs, fp)
+    def http_error_308(self, req, fp, code, msg, hdrs):
+        raise urllib.error.HTTPError(req.full_url, code, msg, hdrs, fp)
 
 def lambda_handler(event, context):
     if DEBUG:
